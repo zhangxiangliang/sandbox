@@ -1,0 +1,19 @@
+@layout('layouts.main')
+
+@section('content')
+  <div class="container">
+    <div class="row justify-content-center">
+      <div class="col-md-4">
+        <div class="card text-center mt-5">
+          <img src="{{ assetsUrl('something-wrong.png') }}" alt="" class="card-img-top">
+          <div class="card-boy">
+            <img src="{{ assetsUrl('wxpay.png') }}" class="w-100" alt="">
+            <p class="card-text">
+              <small class="text-muted">打开微信，扫描支付</small>
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+@endsection
