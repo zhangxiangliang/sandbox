@@ -6,6 +6,9 @@ const randomString = use('randomstring')
 const logger = use('App/Services/Logger')
 const queryString = use('querystring')
 const crypto = use('crypto')
+const convert = use('xml-js')
+const axios = use('axios')
+const qrcode = use('qrcode')
 
 class CheckoutController {
   /**
@@ -21,11 +24,12 @@ class CheckoutController {
    * @param product_id 商品 ID
    *
    */
-  render ({ view }) {
+  async render ({ view }) {
     const appid = Config.get('wxpay.appid')
     const mch_id = Config.get('wxpay.mch_id')
     const key = Config.get('wxpay.key')
     const notify_url = Config.get('wxpay.notify_url')
+    const unifiedOrderApi = Config.get('wxpay.api.unifiedorder')
 
     const out_trade_no = moment().local().format('YYYYMMDDHHmmss')
     const body = 'adonis'
@@ -34,19 +38,67 @@ class CheckoutController {
     const product_id = 1
     const nonce_str = randomString.generate(32)
 
-    let sign = this._signGenerate({
+    let order = {
       appid, mch_id, notify_url,
       out_trade_no, nonce_str, total_fee,
-      trade_type, product_id, key, body,
-    })
+      trade_type, product_id, body,
+    };
 
-    logger.debug(sign)
+    let sign = this.wxPaySign(order, key);
 
-    return view.render('commerce.checkout')
+    const xmlOrder = convert.js2xml(
+      { xml: { ...order, sign }},
+      { compact: true }
+    );
+
+    const wxPayResponse = await axios.post(unifiedOrderApi, xmlOrder)
+    const _prepay = convert.xml2js(wxPayResponse.data, {
+      compact :true,
+      cdataKey: 'value',
+      textKey: 'value'
+    }).xml
+    const prepay = Object.keys(_prepay).reduce((accumulator, key) => {
+      accumulator[key] = _prepay[key].value
+      return accumulator
+    }, {})
+
+    const qrcodeUrl = await qrcode.toDataURL(
+      prepay.code_url || 'https://wx.qq.com/',
+      {width: 300})
+
+    return view.render('commerce.checkout', { qrcodeUrl })
   }
 
-  wxPayNotify () {
+  /**
+   * 微信通知回调函数
+   * 用于接受支付成功的回调 并 返回接收结果
+   */
+  wxPayNotify ({ request }) {
+    const _payment = convert.xml2js(request._raw, {
+      compact: true,
+      cdataKey: 'value',
+      textKey: 'value'
+    }).xml
 
+    const payment = Object.keys(_payment).reduce((accumulator, key) => {
+      accumulator[key] = _payment[key].value
+      return accumulator
+    })
+
+    // 检查签名 || 检查金额
+    const paymentSign = payment.sign
+    delete payment['sign']
+
+    const key = Config.get('wxpay.key')
+    const selfSign = this.wxPaySign(payment, key)
+
+    // 回复微信
+    const return_code = paymentSign === selfSign ? 'SUCCESS' : 'FAIL'
+    const reply = { xml: { return_code } }
+
+    return convert.js2xml(reply, {
+      compact: true
+    })
   }
 
   /**
@@ -57,13 +109,10 @@ class CheckoutController {
    * 4. md5 加密
    * 5. toUpperCase 把数据格式化为大写
    */
-  _signGenerate(order) {
-    const key = order.key
-
-    const sortedOrder = Object.keys(order).sort()
-      .filter(item => item != 'key')
+  wxPaySign(data, key) {
+    const sortedOrder = Object.keys(data).sort()
       .reduce((accumulator, key) => {
-        accumulator[key] = order[key]
+        accumulator[key] = data[key]
         return accumulator
       }, {})
 
